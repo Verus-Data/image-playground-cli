@@ -34,15 +34,15 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            echo "Unknown argument: $1" &&2
-            echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png" &&2
+            echo "Unknown argument: $1" >&2
+            echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png" >&2
             exit 1
             ;;
     esac
 done
 
 if [[ -z "$PROMPT" || -z "$OUTPUT" ]]; then
-    echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png" &&2
+    echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png" >&2
     exit 1
 fi
 
@@ -75,7 +75,7 @@ while [[ ! -f "$OUTPUT" ]]; do
     sleep "$INTERVAL"
     ELAPSED=$((ELAPSED + INTERVAL))
     if [[ $ELAPSED -ge $TIMEOUT ]]; then
-        echo "Error: Timed out waiting for image generation ($TIMEOUT seconds)" &&2
+        echo "Error: Timed out waiting for image generation ($TIMEOUT seconds)" >&2
         exit 2
     fi
 done
