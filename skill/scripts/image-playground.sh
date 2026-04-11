@@ -12,8 +12,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$(cd "$SCRIPT_DIR/../../app" && pwd)"
-APP_BUNDLE="$APP_DIR/image-helper.app"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DIST_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+APP_BUNDLE="$DIST_DIR/image-helper.app"
 
 # Parse arguments
 PROMPT=""
@@ -57,11 +58,11 @@ if [[ -z "$PROMPT" || -z "$OUTPUT" ]]; then
     exit 1
 fi
 
-# Build the app bundle if needed
+# Check that app bundle exists
 if [[ ! -d "$APP_BUNDLE" ]]; then
-    echo "Building image-helper app..."
-    cd "$APP_DIR"
-    make bundle
+    echo "Error: image-helper.app not found at $APP_BUNDLE" >&2
+    echo "The app bundle must be included with the skill distribution." >&2
+    exit 3
 fi
 
 # Prepare output directory
