@@ -99,7 +99,8 @@ package_dist() {
     cp "$SCRIPT_DIR/README.md" "$BUILD_DIR/image-playground-cli/"
     cp "$SCRIPT_DIR/LICENSE" "$BUILD_DIR/image-playground-cli/"
     
-    # Copy SKILL.md
+    # Copy SKILL.md to both root and skill/ for compatibility
+    cp "$SCRIPT_DIR/skill/SKILL.md" "$BUILD_DIR/image-playground-cli/"
     cp "$SCRIPT_DIR/skill/SKILL.md" "$BUILD_DIR/image-playground-cli/skill/"
     
     log_info "Package created at: $BUILD_DIR/image-playground-cli/"
