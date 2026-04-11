@@ -11,54 +11,66 @@ permissions:
 jobs:
   build-and-release:
     runs-on: macos-15
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Setup Swift
       uses: swift-actions/setup-swift@v2
       with:
         swift-version: '6.1'
-    
+
     - name: Build
       run: |
         chmod +x build.sh
         ./build.sh
-    
+
     - name: Get version from tag
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-    
+
+    - name: Create versioned tarball
+      run: |
+        cd dist
+        cp image-playground-cli-${{ steps.get_version.outputs.VERSION }}.tar.gz image-playground-cli-latest.tar.gz
+        cp image-playground-cli-${{ steps.get_version.outputs.VERSION }}.sha256 image-playground-cli-latest.sha256
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         name: Release ${{ steps.get_version.outputs.VERSION }}
         body: |
           ## Image Playground CLI ${{ steps.get_version.outputs.VERSION }}
-          
+
           A command-line interface for generating images using Apple's Image Playground API on macOS.
-          
+
           ### Requirements
           - macOS 15.4 or later
           - Apple Silicon Mac (M1/M2/M3/M4 series)
           - Apple Intelligence enabled
-          
+
           ### Installation
-          
-          Download the tarball and extract:
+
+          Download and extract:
           ```bash
-          tar -xzf image-playground-cli-${{ steps.get_version.outputs.VERSION }}.tar.gz
-          cd image-playground-cli
+          curl -L https://github.com/Verus-Data/image-playground-cli/releases/latest/download/image-playground-cli-latest.tar.gz | tar xz --strip-components=1
           ./skill/scripts/image-playground.sh --prompt "A cat in space" --output ./test.png
           ```
-          
+
+          Or install as an OpenClaw skill:
+          ```bash
+          openclaw skills install image-playground
+          ```
+
           ### Files
-          - `image-playground-cli-${{ steps.get_version.outputs.VERSION }}.tar.gz` - Full distribution
+          - `image-playground-cli-${{ steps.get_version.outputs.VERSION }}.tar.gz` - Versioned distribution
           - `image-playground-cli-${{ steps.get_version.outputs.VERSION }}.sha256` - Checksum
-          
+          - `image-playground-cli-latest.tar.gz` - Latest (stable URL for auto-install)
+          - `image-playground-cli-latest.sha256` - Latest checksum
+
           ### Usage
-          See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
+          See [README.md](https://github.com/Verus-Data/image-playground-cli/blob/main/README.md) for full documentation.
         files: |
           dist/image-playground-cli-*.tar.gz
           dist/image-playground-cli-*.sha256
