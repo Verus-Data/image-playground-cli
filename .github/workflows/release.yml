@@ -2,48 +2,73 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  release:
     runs-on: macos-15
+    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Setup Swift
       uses: swift-actions/setup-swift@v2
       with:
         swift-version: '6.1'
 
+    - name: Get current version
+      id: current_version
+      run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+    - name: Determine next version
+      id: next_version
+      run: |
+        CURRENT=$(cat VERSION)
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+        PATCH=$((PATCH + 1))
+        NEXT="${MAJOR}.${MINOR}.${PATCH}"
+        echo "NEXT=$NEXT" >> $GITHUB_OUTPUT
+        echo "Next version: $NEXT"
+
+    - name: Update VERSION file
+      run: |
+        echo "${{ steps.next_version.outputs.NEXT }}" > VERSION
+
     - name: Build
       run: |
         chmod +x build.sh
         ./build.sh
 
-    - name: Get version from tag
-      id: get_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
     - name: Create versioned tarball
       run: |
         cd dist
-        cp image-playground-cli-${{ steps.get_version.outputs.VERSION }}.tar.gz image-playground-cli-latest.tar.gz
-        cp image-playground-cli-${{ steps.get_version.outputs.VERSION }}.sha256 image-playground-cli-latest.sha256
+        cp "image-playground-cli-${{ steps.current_version.outputs.VERSION }}.tar.gz" "image-playground-cli-latest.tar.gz"
+        cp "image-playground-cli-${{ steps.current_version.outputs.VERSION }}.sha256" "image-playground-cli-latest.sha256"
 
-    - name: Create Release
+    - name: Commit and tag
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add VERSION
+        git commit -m "chore(release): v${{ steps.next_version.outputs.NEXT }}"
+        git tag -a "v${{ steps.next_version.outputs.NEXT }}" -m "Release v${{ steps.next_version.outputs.NEXT }}"
+        git push
+        git push --tags
+
+    - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
-        name: Release ${{ steps.get_version.outputs.VERSION }}
+        tag_name: v${{ steps.next_version.outputs.NEXT }}
+        name: Release v${{ steps.next_version.outputs.NEXT }}
         body: |
-          ## Image Playground CLI ${{ steps.get_version.outputs.VERSION }}
-
-          A command-line interface for generating images using Apple's Image Playground API on macOS.
+          ## Image Playground CLI v${{ steps.next_version.outputs.NEXT }}
 
           ### Requirements
           - macOS 15.4 or later
@@ -51,8 +76,6 @@ jobs:
           - Apple Intelligence enabled
 
           ### Installation
-
-          Download and extract:
           ```bash
           curl -L https://github.com/Verus-Data/image-playground-cli/releases/latest/download/image-playground-cli-latest.tar.gz | tar xz --strip-components=1
           ./skill/scripts/image-playground.sh --prompt "A cat in space" --output ./test.png
@@ -64,13 +87,12 @@ jobs:
           ```
 
           ### Files
-          - `image-playground-cli-${{ steps.get_version.outputs.VERSION }}.tar.gz` - Versioned distribution
-          - `image-playground-cli-${{ steps.get_version.outputs.VERSION }}.sha256` - Checksum
+          - `image-playground-cli-v${{ steps.next_version.outputs.NEXT }}.tar.gz` - Versioned distribution
+          - `image-playground-cli-v${{ steps.next_version.outputs.NEXT }}.sha256` - Checksum
           - `image-playground-cli-latest.tar.gz` - Latest (stable URL for auto-install)
           - `image-playground-cli-latest.sha256` - Latest checksum
 
-          ### Usage
-          See [README.md](https://github.com/Verus-Data/image-playground-cli/blob/main/README.md) for full documentation.
+          **Full Changelog**: https://github.com/Verus-Data/image-playground-cli/compare/v${{ steps.current_version.outputs.VERSION }}...v${{ steps.next_version.outputs.NEXT }}
         files: |
           dist/image-playground-cli-*.tar.gz
           dist/image-playground-cli-*.sha256
