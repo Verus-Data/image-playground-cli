@@ -110,6 +110,21 @@ Modify the app to stay running and accept multiple generation requests before ex
 - **File size:** Typically 2–4 MB
 - **Generation time:** ~15 seconds per image
 
+## Sharing in Chat
+
+To share generated images in OpenClaw webchat or other channels, use the JPEG conversion options:
+
+```bash
+./skill/scripts/image-playground.sh \
+    --prompt "A cat in a space suit" \
+    --style illustration \
+    --output ./output.png \
+    --jpeg-quality 85 \
+    --max-width 1024
+```
+
+This creates a web-optimized JPEG (~100-300 KB) alongside the original PNG. The JPEG can be shared using the `message` tool with the `media` parameter. See the skill documentation for complete details.
+
 ## Project Structure
 
 ```
