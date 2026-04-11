@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: '6.1'
+
+    - name: Build
+      run: |
+        chmod +x build.sh
+        ./build.sh
+
+    - name: Run tests
+      run: |
+        cd app
+        swift test --parallel 2>&1 | tee test-output.txt
+
+    - name: Generate coverage report
+      if: github.event_name == 'pull_request'
+      run: |
+        cd app
+        swift test --parallel --enable-code-coverage 2>&1 | tee coverage-output.txt || true
+        # Extract coverage data
+        xcrun llvm-cov report .build/debug/image-helperPackageTests.xctest/Contents/MacOS/image-helperPackageTests \
+          -instr-profile=.build/debug/codecov/default.profdata \
+          -ignore-filename-regex='\.build|Packages|Tests' \
+          2>/dev/null > coverage-report.txt || true
+        # Format summary for PR comment
+        if [ -f coverage-report.txt ]; then
+          echo "## Code Coverage Report" > coverage-summary.md
+          echo "" >> coverage-summary.md
+          echo '```' >> coverage-summary.md
+          cat coverage-report.txt >> coverage-summary.md
+          echo '```' >> coverage-summary.md
+        fi
+
+    - name: Post coverage summary
+      if: github.event_name == 'pull_request'
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        header: coverage
+        path: app/coverage-summary.md
+      continue-on-error: true
+
+    - name: Build test summary
+      if: always()
+      run: |
+        echo "## Build & Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f app/test-output.txt ]; then
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 app/test-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ -f app/coverage-report.txt ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Coverage" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat app/coverage-report.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
