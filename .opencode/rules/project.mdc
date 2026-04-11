@@ -1,0 +1,32 @@
+---
+description: "Project rules for image-playground-cli. All code changes must follow these patterns."
+globs: ["**/*"]
+---
+
+# Image Playground CLI — Project Rules
+
+## CI/CD
+
+- **Two workflows**: `ci.yml` (PR + push to main) and `release.yml` (tag pushes only)
+- **CI runs on every PR**: build, test, and coverage report posted as PR comment
+- **Swift 6.1+ required**: Swift 6.0.3 has a compiler crash bug with SwiftUI/ImagePlayground IRGen
+- **Coverage**: Use `llvm-cov` for coverage reporting, post summary to PR via `sticky-pull-request-comment` action
+
+## Code Style
+
+- Shell scripts: `set -euo pipefail`, proper error handling, meaningful exit codes
+- Swift: follow existing patterns in `app/Sources/main.swift`
+- Always test changes with `--check` flag before generating images
+
+## Release Process
+
+1. Update VERSION in `build.sh`
+2. Commit and push to main
+3. Tag: `git tag -a v<X.Y.Z> -m "Release v<X.Y.Z>"`
+4. Push tag: `git push origin v<X.Y.Z>`
+5. CI builds the tarball and creates the GitHub release automatically
+
+## Known Issues
+
+- Apple Image Playground requires foreground app — the shell script handles this with `osascript` activate and process cleanup
+- Mac must be unlocked and awake for image generation to work
