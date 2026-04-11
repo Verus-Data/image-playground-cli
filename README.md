@@ -19,6 +19,32 @@ This tool allows you to generate AI images from text prompts using Apple's on-de
 
 The Image Playground framework is only available on Apple Silicon Macs with Apple Intelligence support. It will not work on Intel Macs or older macOS versions.
 
+## Installation
+
+### Method 1: Manual Install (Recommended)
+
+Download the latest release tarball and extract it to your OpenClaw workspace skills directory:
+
+```bash
+# Download the latest release
+curl -L -o image-playground-cli.tar.gz \
+  https://github.com/Verus-Data/image-playground-cli/releases/download/v1.0.0/image-playground-cli-1.0.0.tar.gz
+
+# Extract to OpenClaw workspace skills
+tar -xzf image-playground-cli.tar.gz
+mv image-playground-cli ~/.openclaw/workspace/skills/image-playground
+
+# Verify installation
+openclaw skills list | grep image-playground
+```
+
+### Method 2: From Source
+
+```bash
+git clone https://github.com/Verus-Data/image-playground-cli.git
+./build.sh
+```
+
 ## How to Build
 
 The project includes a SwiftUI helper app that must be built first:
