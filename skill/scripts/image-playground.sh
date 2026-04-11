@@ -17,7 +17,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-APP_BUNDLE="$DIST_DIR/image-helper.app"
+APP_BUNDLE=""
+# Find the app bundle — check dist first, then relative to script
+if [[ -d "$DIST_DIR/dist/image-playground-cli/image-helper.app" ]]; then
+    APP_BUNDLE="$DIST_DIR/dist/image-playground-cli/image-helper.app"
+elif [[ -d "$DIST_DIR/image-helper.app" ]]; then
+    APP_BUNDLE="$DIST_DIR/image-helper.app"
+else
+    # Walk up from script location to find it
+    APP_BUNDLE="$(find "$(cd "$SCRIPT_DIR/../../.." && pwd)" -name "image-helper.app" -maxdepth 3 -type d 2>/dev/null | head -1)"
+fi
 APP_NAME="image-helper"
 
 # Configuration
@@ -89,15 +98,16 @@ check_preconditions() {
 }
 
 is_mac_awake_and_unlocked() {
-    # Check if screen is locked using ScreenSaver state
-    local saver_state=$(osascript -e 'tell application "System Events" to return name of current screen saver' 2>/dev/null || echo "none")
-    if [[ "$saver_state" != "none" && -n "$saver_state" ]]; then
+    # Check if screen saver is running (most reliable locked indicator)
+    if pgrep -q ScreenSaverEngine 2>/dev/null; then
         return 1
     fi
 
-    # Check if display is asleep using pmset
-    local displaysleep=$(pmset -g powerstate IODisplayWrangler 2>/dev/null | grep "Current" | awk '{print $3}' || echo "")
-    if [[ "$displaysleep" == "OFF" ]]; then
+    # Check if a loginwindow is active at the console (screen is locked)
+    # When locked, loginwindow owns the console session
+    local console_user
+    console_user=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
+    if [[ "$console_user" == "root" || -z "$console_user" ]]; then
         return 1
     fi
 
