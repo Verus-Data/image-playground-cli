@@ -1,16 +1,16 @@
 #!/bin/bash
 # image-playground.sh — OpenClaw skill wrapper for Image Playground CLI
 #
-# Usage: image-playground.sh --prompt "text" --style illustration --output /path/to/save.png [--jpeg-quality 85] [--max-width 1024] [--timeout 120]
+# Usage: image-playground.sh --prompt "text" --style illustration --output /path/to/save.png [--jpeg-quality 85] [--max-width 1024] [--timeout 120] [--retries 1]
 #        image-playground.sh --check  (verify preconditions without generating)
 #
 # This wrapper:
 # 1. Checks preconditions (Mac awake, Apple Intelligence available)
-# 2. Builds the helper app if needed
-# 3. Launches it via `open` (required for foreground status)
-# 4. Forces foreground aggressively with osascript
-# 5. Waits for the output file to appear
-# 6. Optionally converts to JPEG for smaller file size (webchat compatible)
+# 2. Kills any stale image-helper processes
+# 3. Launches the app and forces foreground
+# 4. Retries once on failure (handles intermittent foreground issues)
+# 5. Waits for output with progress indicator
+# 6. Optionally converts to JPEG
 
 set -euo pipefail
 
@@ -20,145 +20,179 @@ DIST_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 APP_BUNDLE="$DIST_DIR/image-helper.app"
 APP_NAME="image-helper"
 
+# Configuration
+MAX_RETRIES=1
+RETRY_DELAY=5
+
+error_exit() {
+    local code=$1
+    local msg=$2
+    local recovery="${3:-}"
+    echo "" >&2
+    echo "Error: $msg" >&2
+    if [[ -n "$recovery" ]]; then
+        echo "" >&2
+        echo "Recovery:" >&2
+        echo "  $recovery" >&2
+    fi
+    exit "$code"
+}
+
 check_preconditions() {
     local failures=0
 
     echo "Checking preconditions..."
 
-    if ! is_mac_awake; then
-        echo "FAIL: Mac appears to be locked or asleep." >&2
-        echo "  -> Unlock your Mac and ensure the screen is active." >&2
+    # Check if Mac is awake and unlocked
+    if ! is_mac_awake_and_unlocked; then
+        echo "  ✗ Mac is locked, asleep, or screen saver is active" >&2
         failures=$((failures + 1))
     else
-        echo "OK: Mac is awake and unlocked."
+        echo "  ✓ Mac is awake and unlocked"
     fi
 
-    if ! check_apple_intelligence; then
-        echo "FAIL: Apple Intelligence / Image Playground not available." >&2
-        echo "  -> Requires macOS 15.4+ and Apple Silicon (M1+)." >&2
+    # Check Apple Silicon
+    local arch=$(uname -m)
+    if [[ "$arch" != "arm64" ]]; then
+        echo "  ✗ Not Apple Silicon ($arch) — Image Playground requires M1/M2/M3/M4" >&2
         failures=$((failures + 1))
     else
-        echo "OK: Apple Intelligence appears available."
+        echo "  ✓ Apple Silicon detected"
     fi
 
-    if [[ ! -d "$APP_BUNDLE" ]]; then
-        echo "FAIL: image-helper.app not found at $APP_BUNDLE" >&2
-        failures=$((failures + 1))
-    else
-        echo "OK: image-helper.app bundle found."
-    fi
-
-    return $failures
-}
-
-is_mac_awake() {
-    python3 -c "
-import subprocess
-try:
-    result = subprocess.run(['osascript', '-e', '''
-tell application \"System Events\"
-    set screenState to (do shell script \"pmset get displaysleep\" as string)
-    return screenState
-end tell
-'''], capture_output=True, text=True, timeout=5)
-    output = result.stdout.strip().lower()
-    if 'never' in output or '0' in output:
-        print('awake')
-    else:
-        print('sleeping')
-except Exception:
-    try:
-        import Quartz
-        session = Quartz.CGSessionCopyCurrentDictionary()
-        if session:
-            print('awake')
-        else:
-            print('sleeping')
-    except Exception:
-        print('unknown')
-" 2>/dev/null | grep -q "awake"
-}
-
-check_apple_intelligence() {
-    local os_version kernel_arch
-    os_version=$(sw_vers -productVersion)
-    kernel_arch=$(uname -m)
-
-    if [[ "$kernel_arch" != "arm64" ]]; then
-        return 1
-    fi
-
-    local major minor
-    major=$(echo "$os_version" | cut -d. -f1)
-    minor=$(echo "$os_version" | cut -d. -f2)
-
+    # Check macOS version (need 15.4+)
+    local os_version=$(sw_vers -productVersion)
+    local major=$(echo "$os_version" | cut -d. -f1)
+    local minor=$(echo "$os_version" | cut -d. -f2)
     if [[ "$major" -lt 15 ]] || [[ "$major" -eq 15 && "$minor" -lt 4 ]]; then
+        echo "  ✗ macOS $os_version — requires 15.4+" >&2
+        failures=$((failures + 1))
+    else
+        echo "  ✓ macOS $os_version"
+    fi
+
+    # Check for app bundle
+    if [[ ! -d "$APP_BUNDLE" ]]; then
+        echo "  ✗ image-helper.app not found at $APP_BUNDLE" >&2
+        failures=$((failures + 1))
+    else
+        echo "  ✓ image-helper.app found"
+    fi
+
+    if [[ $failures -gt 0 ]]; then
+        echo "" >&2
+        echo "$failures precondition(s) failed." >&2
         return 1
     fi
 
     return 0
+}
+
+is_mac_awake_and_unlocked() {
+    # Check if screen is locked using ScreenSaver state
+    local saver_state=$(osascript -e 'tell application "System Events" to return name of current screen saver' 2>/dev/null || echo "none")
+    if [[ "$saver_state" != "none" && -n "$saver_state" ]]; then
+        return 1
+    fi
+
+    # Check if display is asleep using pmset
+    local displaysleep=$(pmset -g powerstate IODisplayWrangler 2>/dev/null | grep "Current" | awk '{print $3}' || echo "")
+    if [[ "$displaysleep" == "OFF" ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+kill_stale_processes() {
+    # Find and kill any existing image-helper processes
+    local pids=$(pgrep -f "image-helper" || true)
+    if [[ -n "$pids" ]]; then
+        echo "Cleaning up stale image-helper process(es): $pids"
+        kill $pids 2>/dev/null || true
+        sleep 1
+        # Force kill if still running
+        kill -9 $pids 2>/dev/null || true
+        sleep 0.5
+    fi
 }
 
 force_foreground() {
-    sleep 1
+    # Activate the app via AppleScript
     osascript -e "tell application \"$APP_NAME\" to activate" 2>/dev/null || true
-    sleep 0.5
+
+    # Also try direct binary execution as fallback (runs in background)
     if [[ -x "$APP_BUNDLE/Contents/MacOS/$APP_NAME" ]]; then
+        local helper_pid
         "$APP_BUNDLE/Contents/MacOS/$APP_NAME" &
+        helper_pid=$!
+        echo $helper_pid
+        return 0
     fi
-    sleep 0.5
+
+    return 1
 }
 
-print_spinner() {
-    local pid=$1
-    local delay=0.2
-    local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    local i=0
-    while kill -0 "$pid" 2>/dev/null; do
-        local temp=${spinstr:i%${#spinstr}:1}
-        printf "\r[%c] Waiting for image... " "$temp"
-        sleep $delay
-        i=$(( (i + 1) % ${#spinstr} ))
-    done
-    printf "\r%-50s\r" ""
-}
+wait_for_generation() {
+    local output="$1"
+    local timeout="${2:-120}"
+    local start_time=$(date +%s)
 
-wait_for_output() {
-    local output=$1
-    local timeout=${2:-120}
-    local elapsed=0
-    local interval=1
+    echo -n "Waiting for generation "
 
-    while [[ ! -f "$OUTPUT" ]]; do
-        sleep "$interval"
-        elapsed=$((elapsed + interval))
-
-        if ! kill -0 $$ 2>/dev/null; then
-            echo "Error: Script interrupted" >&2
-            return 1
-        fi
+    while [[ ! -f "$output" ]]; do
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
 
         if [[ $elapsed -ge $timeout ]]; then
-            echo "" >&2
-            echo "Error: Timed out waiting for image generation ($timeout seconds)" >&2
-            echo "This typically happens when:" >&2
-            echo "  - The Mac is locked or asleep" >&2
-            echo "  - The app cannot get foreground focus" >&2
-            echo "  - Apple Intelligence is unavailable" >&2
+            echo ""
+            echo ""
             return 1
         fi
 
-        printf "."
+        # Show progress every 5 seconds
+        if [[ $((elapsed % 5)) -eq 0 && $elapsed -gt 0 ]]; then
+            echo -n "."
+        fi
+
+        sleep 1
     done
 
+    echo ""
     return 0
 }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DIST_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-APP_BUNDLE="$DIST_DIR/image-helper.app"
+generate_image() {
+    local prompt="$1"
+    local style="$2"
+    local output="$3"
+    local timeout="$4"
 
+    # Clean up any existing output
+    rm -f "$output"
+
+    # Kill stale processes before launching
+    kill_stale_processes
+
+    # Launch with environment variables
+    IMAGE_HELPER_PROMPT="$prompt" \
+    IMAGE_HELPER_STYLE="$style" \
+    IMAGE_HELPER_OUTPUT="$output" \
+    open "$APP_BUNDLE"
+
+    # Try to force foreground
+    sleep 1
+    local direct_pid=$(force_foreground)
+
+    # Wait for output
+    if wait_for_generation "$output" "$timeout"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Parse arguments
 PROMPT=""
 STYLE="illustration"
 OUTPUT=""
@@ -166,6 +200,7 @@ JPEG_QUALITY=""
 MAX_WIDTH=""
 TIMEOUT=120
 CHECK_ONLY=false
+RETRIES=$MAX_RETRIES
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -193,90 +228,91 @@ while [[ $# -gt 0 ]]; do
             TIMEOUT="$2"
             shift 2
             ;;
+        --retries)
+            RETRIES="$2"
+            shift 2
+            ;;
         --check)
             CHECK_ONLY=true
             shift
             ;;
         *)
             echo "Unknown argument: $1" >&2
-            echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png [--jpeg-quality 85] [--max-width 1024] [--timeout 120]" >&2
-            echo "       $0 --check" >&2
+            echo "" >&2
+            echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png [options]" >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  --jpeg-quality N   Convert to JPEG with quality N (1-100)" >&2
+            echo "  --max-width N      Resize to max width N pixels" >&2
+            echo "  --timeout N        Wait up to N seconds (default: 120)" >&2
+            echo "  --retries N        Retry N times on failure (default: 1)" >&2
+            echo "  --check            Verify preconditions without generating" >&2
             exit 1
             ;;
     esac
 done
 
+# --check mode
 if [[ "$CHECK_ONLY" == true ]]; then
     check_preconditions
     exit $?
 fi
 
+# Validate required args
 if [[ -z "$PROMPT" || -z "$OUTPUT" ]]; then
-    echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png [--jpeg-quality 85] [--max-width 1024] [--timeout 120]" >&2
-    echo "       $0 --check" >&2
+    echo "Usage: $0 --prompt \"text\" --style illustration|animation|sketch --output /path/to/save.png [options]" >&2
     exit 1
 fi
 
+# Check preconditions
 if ! check_preconditions; then
-    echo "" >&2
-    echo "Precondition check failed. Fix the issues above before retrying." >&2
-    exit 4
+    error_exit 4 "Precondition check failed." \
+        "Unlock your Mac, ensure the screen is active, and verify Apple Intelligence is enabled in System Settings."
 fi
 
-if [[ ! -d "$APP_BUNDLE" ]]; then
-    echo "Error: image-helper.app not found at $APP_BUNDLE" >&2
-    echo "The app bundle must be included with the skill distribution." >&2
-    exit 3
-fi
-
+# Create output directory
 OUTPUT_DIR="$(dirname "$OUTPUT")"
 mkdir -p "$OUTPUT_DIR"
-rm -f "$OUTPUT"
 
-IMAGE_HELPER_PROMPT="$PROMPT" \
-IMAGE_HELPER_STYLE="$STYLE" \
-IMAGE_HELPER_OUTPUT="$OUTPUT" \
-open "$APP_BUNDLE"
+# Main generation loop with retries
+attempt=0
+while [[ $attempt -le $RETRIES ]]; do
+    if [[ $attempt -gt 0 ]]; then
+        echo ""
+        echo "Retry attempt $attempt/$RETRIES in ${RETRY_DELAY}s..."
+        sleep $RETRY_DELAY
+    fi
 
-force_foreground
+    if generate_image "$PROMPT" "$STYLE" "$OUTPUT" "$TIMEOUT"; then
+        break
+    fi
 
-if ! wait_for_output "$OUTPUT" "$TIMEOUT"; then
-    exit 2
+    attempt=$((attempt + 1))
+done
+
+if [[ ! -f "$OUTPUT" ]]; then
+    error_exit 2 "Image generation failed after $((attempt)) attempt(s)." \
+        "The Image Playground framework requires a fresh foreground session. Try:\n  1. Ensure no other image-helper processes are running (killall image-helper)\n  2. Run 'open -a image-helper' manually once to warm up the framework\n  3. Retry the command"
 fi
 
-echo "Image generated successfully: $OUTPUT"
+echo ""
+echo "✓ Image generated successfully: $OUTPUT"
 
-# If JPEG conversion is requested, create a web-optimized version
+# Optional JPEG conversion
 if [[ -n "$JPEG_QUALITY" ]]; then
-    # Determine output paths
-    OUTPUT_DIR="$(dirname "$OUTPUT")"
-    OUTPUT_BASE="$(basename "$OUTPUT" .png)"
-    JPEG_OUTPUT="$OUTPUT_DIR/${OUTPUT_BASE}.jpg"
-    
-    # Build convert command
-    CONVERT_CMD=(convert "$OUTPUT")
-    
-    # Add resize if max-width specified
-    if [[ -n "$MAX_WIDTH" ]]; then
-        CONVERT_CMD+=(-resize "${MAX_WIDTH}x${MAX_WIDTH}>")
-    fi
-    
-    # Add JPEG quality and output
-    CONVERT_CMD+=(-quality "$JPEG_QUALITY" "$JPEG_OUTPUT")
-    
-    # Try ImageMagick convert first, fallback to sips (macOS built-in)
+    JPEG_OUTPUT="${OUTPUT%.png}.jpg"
+
     if command -v convert &> /dev/null; then
-        "${CONVERT_CMD[@]}"
-        echo "Web-optimized JPEG created: $JPEG_OUTPUT"
+        convert "$OUTPUT" -quality "$JPEG_QUALITY" ${MAX_WIDTH:+-resize "${MAX_WIDTH}x${MAX_WIDTH}>"} "$JPEG_OUTPUT"
+        echo "✓ JPEG created: $JPEG_OUTPUT"
     elif command -v sips &> /dev/null; then
-        # sips doesn't have quality parameter, but can resize and convert
         if [[ -n "$MAX_WIDTH" ]]; then
             sips -Z "$MAX_WIDTH" -s format jpeg "$OUTPUT" --out "$JPEG_OUTPUT" &> /dev/null
         else
             sips -s format jpeg "$OUTPUT" --out "$JPEG_OUTPUT" &> /dev/null
         fi
-        echo "Web-optimized JPEG created: $JPEG_OUTPUT"
+        echo "✓ JPEG created: $JPEG_OUTPUT"
     else
-        echo "Warning: No image conversion tool found. Install ImageMagick for JPEG conversion." >&2
+        echo "⚠ Warning: No image conversion tool found (ImageMagick or sips)" >&2
     fi
 fi
