@@ -6,6 +6,9 @@
 # App bundles (build them locally)
 *.app/
 
+# Distribution builds
+dist/
+
 # Output files
 output/
 *.png
