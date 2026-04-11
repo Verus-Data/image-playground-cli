@@ -1,0 +1,25 @@
+# Swift build artifacts
+.build/
+*.xcodeproj
+*.xcworkspace
+
+# App bundles (build them locally)
+*.app/
+
+# Output files
+output/
+*.png
+*.jpg
+*.jpeg
+*.heic
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Temporary files
+/tmp/
+*.tmp
