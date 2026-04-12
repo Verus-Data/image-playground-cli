@@ -28,7 +28,7 @@ jobs:
     - name: Setup Node
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
 
     - name: Install semantic-release
       run: npm install -g semantic-release@25 @semantic-release/exec@6
@@ -37,25 +37,3 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: semantic-release
-
-    - name: Create latest tarball symlinks
-      run: |
-        # semantic-release creates the release with assets
-        # We need to ensure latest symlinks exist
-        cd dist
-        LATEST=$(ls -t image-playground-cli-*.tar.gz | grep -v latest | head -1)
-        if [ -n "$LATEST" ]; then
-          cp "$LATEST" image-playground-cli-latest.tar.gz
-          cp "${LATEST%.tar.gz}.sha256" image-playground-cli-latest.sha256 2>/dev/null || true
-        fi
-
-    - name: Upload latest assets to release
-      if: success()
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        # Get the release that was just created
-        RELEASE_TAG=$(cat VERSION)
-        if [ -f dist/image-playground-cli-latest.tar.gz ]; then
-          gh release upload "$RELEASE_TAG" dist/image-playground-cli-latest.tar.gz dist/image-playground-cli-latest.sha256 --clobber || true
-        fi
