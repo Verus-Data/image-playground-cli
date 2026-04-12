@@ -21,24 +21,33 @@ The Image Playground framework is only available on Apple Silicon Macs with Appl
 
 ## Installation
 
-### Method 1: Manual Install (Recommended)
+### Method 1: Via OpenClaw Hub (Published Skills)
 
-Download the latest release tarball and extract it to your OpenClaw workspace skills directory:
+For published releases from the registry:
 
 ```bash
-# Download the latest release
-curl -L -o image-playground-cli.tar.gz \
-  https://github.com/Verus-Data/image-playground-cli/releases/download/v1.0.0/image-playground-cli-1.0.0.tar.gz
-
-# Extract to OpenClaw workspace skills
-tar -xzf image-playground-cli.tar.gz
-mv image-playground-cli ~/.openclaw/workspace/skills/image-playground
-
-# Verify installation
-openclaw skills list | grep image-playground
+openclaw hub install image-playground-cli
 ```
 
-### Method 2: From Source
+### Method 2: Local Development Install (Pre-built)
+
+For testing/development before publishing to ClawHub:
+
+```bash
+# Build the distribution
+./build.sh
+
+# Extract to OpenClaw skills directory
+tar -xzf dist/image-playground-cli-*.tar.gz -C ~/.openclaw/skills/
+mv ~/.openclaw/skills/image-playground-cli-* ~/.openclaw/skills/image-playground-cli
+
+# Verify installation
+~/.openclaw/skills/image-playground-cli/skill/scripts/image-playground.sh --check
+```
+
+This installs the pre-built distribution locally without publishing to ClawHub, useful for development and testing.
+
+### Method 3: From Source
 
 ```bash
 git clone https://github.com/Verus-Data/image-playground-cli.git
