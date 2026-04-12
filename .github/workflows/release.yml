@@ -6,95 +6,56 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   release:
     runs-on: macos-15
-    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+        persist-credentials: false
 
     - name: Setup Swift
       uses: swift-actions/setup-swift@v2
       with:
         swift-version: '6.1'
 
-    - name: Get current version
-      id: current_version
-      run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
-
-    - name: Determine next version
-      id: next_version
-      run: |
-        CURRENT=$(cat VERSION)
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-        PATCH=$((PATCH + 1))
-        NEXT="${MAJOR}.${MINOR}.${PATCH}"
-        echo "NEXT=$NEXT" >> $GITHUB_OUTPUT
-        echo "Next version: $NEXT"
-
-    - name: Update VERSION file
-      run: |
-        echo "${{ steps.next_version.outputs.NEXT }}" > VERSION
-
-    - name: Build
-      run: |
-        chmod +x build.sh
-        ./build.sh
-
-    - name: Create versioned tarball
-      run: |
-        cd dist
-        cp "image-playground-cli-${{ steps.current_version.outputs.VERSION }}.tar.gz" "image-playground-cli-latest.tar.gz"
-        cp "image-playground-cli-${{ steps.current_version.outputs.VERSION }}.sha256" "image-playground-cli-latest.sha256"
-
-    - name: Commit and tag
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add VERSION
-        git commit -m "chore(release): v${{ steps.next_version.outputs.NEXT }}"
-        git tag -a "v${{ steps.next_version.outputs.NEXT }}" -m "Release v${{ steps.next_version.outputs.NEXT }}"
-        git push
-        git push --tags
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+    - name: Setup Node
+      uses: actions/setup-node@v4
       with:
-        tag_name: v${{ steps.next_version.outputs.NEXT }}
-        name: Release v${{ steps.next_version.outputs.NEXT }}
-        body: |
-          ## Image Playground CLI v${{ steps.next_version.outputs.NEXT }}
+        node-version: '20'
 
-          ### Requirements
-          - macOS 15.4 or later
-          - Apple Silicon Mac (M1/M2/M3/M4 series)
-          - Apple Intelligence enabled
+    - name: Install semantic-release
+      run: npm install -g semantic-release@25 @semantic-release/exec@6
 
-          ### Installation
-          ```bash
-          curl -L https://github.com/Verus-Data/image-playground-cli/releases/latest/download/image-playground-cli-latest.tar.gz | tar xz --strip-components=1
-          ./skill/scripts/image-playground.sh --prompt "A cat in space" --output ./test.png
-          ```
-
-          Or install as an OpenClaw skill:
-          ```bash
-          openclaw skills install image-playground
-          ```
-
-          ### Files
-          - `image-playground-cli-v${{ steps.next_version.outputs.NEXT }}.tar.gz` - Versioned distribution
-          - `image-playground-cli-v${{ steps.next_version.outputs.NEXT }}.sha256` - Checksum
-          - `image-playground-cli-latest.tar.gz` - Latest (stable URL for auto-install)
-          - `image-playground-cli-latest.sha256` - Latest checksum
-
-          **Full Changelog**: https://github.com/Verus-Data/image-playground-cli/compare/v${{ steps.current_version.outputs.VERSION }}...v${{ steps.next_version.outputs.NEXT }}
-        files: |
-          dist/image-playground-cli-*.tar.gz
-          dist/image-playground-cli-*.sha256
+    - name: Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: semantic-release
+
+    - name: Create latest tarball symlinks
+      run: |
+        # semantic-release creates the release with assets
+        # We need to ensure latest symlinks exist
+        cd dist
+        LATEST=$(ls -t image-playground-cli-*.tar.gz | grep -v latest | head -1)
+        if [ -n "$LATEST" ]; then
+          cp "$LATEST" image-playground-cli-latest.tar.gz
+          cp "${LATEST%.tar.gz}.sha256" image-playground-cli-latest.sha256 2>/dev/null || true
+        fi
+
+    - name: Upload latest assets to release
+      if: success()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Get the release that was just created
+        RELEASE_TAG=$(cat VERSION)
+        if [ -f dist/image-playground-cli-latest.tar.gz ]; then
+          gh release upload "$RELEASE_TAG" dist/image-playground-cli-latest.tar.gz dist/image-playground-cli-latest.sha256 --clobber || true
+        fi
