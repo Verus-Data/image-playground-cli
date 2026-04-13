@@ -96,7 +96,7 @@ package_dist() {
     chmod +x "$BUILD_DIR/image-playground-cli/skill/scripts/image-playground.sh"
     
     # Copy documentation
-    cp "$SCRIPT_DIR/README.md" "$BUILD_DIR/image-playground-cli/"
+    cp "$SCRIPT_DIR/docs/README.md" "$BUILD_DIR/image-playground-cli/"
     cp "$SCRIPT_DIR/LICENSE" "$BUILD_DIR/image-playground-cli/"
     
     # Copy SKILL.md to both root and skill/ for compatibility
